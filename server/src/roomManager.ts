@@ -56,6 +56,7 @@ function makeDefaultRoom(code: string): Room {
     turnSkipped: [],
     allSlips: [],
     carryoverTime: 0,
+    pausedFromPhase: null,
     createdAt: Date.now(),
     lastActivityAt: Date.now(),
   };
@@ -112,7 +113,32 @@ export class RoomManager {
       return "Room is full (maximum 8 players)";
     }
 
-    // Check for duplicate name in the room
+    // Check for a disconnected player with the same name (reconnection)
+    const disconnectedPlayer = room!.players.find(
+      (p) => p.name.toLowerCase() === trimmedName.toLowerCase() && !p.connected
+    );
+
+    if (disconnectedPlayer) {
+      // Reconnect: restore the existing player record
+      disconnectedPlayer.connected = true;
+      room!.lastActivityAt = Date.now();
+
+      this.clients.set(disconnectedPlayer.id, { ws, playerId: disconnectedPlayer.id, roomCode });
+
+      // Transfer host if no one else is host
+      const hasHost = room!.players.some((p) => p.isHost && p.connected);
+      if (!hasHost) {
+        disconnectedPlayer.isHost = true;
+      }
+
+      // Check if we can unpause
+      this.checkTeamPause(room!);
+
+      this.broadcastRoomState(roomCode);
+      return null;
+    }
+
+    // Check for duplicate name among connected players
     const nameTaken = room!.players.some(
       (p) => p.name.toLowerCase() === trimmedName.toLowerCase() && p.connected
     );
@@ -127,7 +153,7 @@ export class RoomManager {
       id: playerId,
       name: trimmedName,
       team: null,
-      isHost: isNewRoom || room!.players.length === 0,
+      isHost: isNewRoom || room!.players.filter((p) => p.connected).length === 0,
       connected: true,
       slips: [],
     };
@@ -154,7 +180,11 @@ export class RoomManager {
 
   /**
    * Handle a player disconnecting.
-   * Removes them from the room, transfers host if needed.
+   * In lobby phase, removes the player entirely.
+   * During gameplay, marks them as disconnected (preserving scores/slips).
+   * Ends the turn if the active clue-giver disconnects.
+   * Transfers host if the host disconnects.
+   * Pauses the game if a team has no connected players.
    */
   handleDisconnect(ws: WebSocket): void {
     const clientEntry = this.findClientByWs(ws);
@@ -167,31 +197,109 @@ export class RoomManager {
       return;
     }
 
-    // Remove the player from the room
-    const playerIndex = room.players.findIndex((p) => p.id === playerId);
-    if (playerIndex === -1) {
+    const player = room.players.find((p) => p.id === playerId);
+    if (!player) {
       this.clients.delete(playerId);
       return;
     }
 
-    const wasHost = room.players[playerIndex].isHost;
-    room.players.splice(playerIndex, 1);
+    const wasHost = player.isHost;
+    const wasClueGiver = room.activeClueGiverId === playerId;
     this.clients.delete(playerId);
     room.lastActivityAt = Date.now();
 
-    // If room is empty, remove it
-    if (room.players.length === 0) {
+    // In lobby phase, remove the player entirely
+    if (room.phase === GamePhase.Lobby) {
+      const playerIndex = room.players.findIndex((p) => p.id === playerId);
+      room.players.splice(playerIndex, 1);
+
+      if (room.players.length === 0) {
+        this.rooms.delete(roomCode);
+        return;
+      }
+
+      if (wasHost) {
+        room.players[0].isHost = true;
+      }
+
+      this.broadcastRoomState(roomCode);
+      return;
+    }
+
+    // During gameplay: mark as disconnected instead of removing
+    player.connected = false;
+    player.isHost = false;
+
+    // Check if any connected players remain at all
+    const connectedPlayers = room.players.filter((p) => p.connected);
+    if (connectedPlayers.length === 0) {
+      this.clearTurnTimer(roomCode);
       this.rooms.delete(roomCode);
       return;
     }
 
-    // Transfer host if the host left
+    // Transfer host to another connected player
     if (wasHost) {
-      room.players[0].isHost = true;
+      connectedPlayers[0].isHost = true;
     }
 
-    // Broadcast updated state
+    // If the active clue-giver disconnected during a turn, end the turn immediately
+    if (wasClueGiver && room.phase === GamePhase.TurnActive) {
+      this.endTurn(room);
+    }
+
+    // Check if either team has no connected players → pause the game
+    this.checkTeamPause(room);
+
     this.broadcastRoomState(roomCode);
+  }
+
+  /**
+   * Check if any team has no connected players during gameplay.
+   * If so, pause the game. If teams are restored, unpause.
+   */
+  private checkTeamPause(room: Room): void {
+    // Only check during active gameplay phases
+    const gameplayPhases = [
+      GamePhase.Playing,
+      GamePhase.TurnActive,
+      GamePhase.TurnEnd,
+      GamePhase.RoundEnd,
+    ];
+
+    if (room.phase === GamePhase.Paused) {
+      // Check if we can unpause — both teams need connected players
+      const teamAConnected = room.players.filter((p) => p.team === Team.A && p.connected);
+      const teamBConnected = room.players.filter((p) => p.team === Team.B && p.connected);
+
+      if (teamAConnected.length > 0 && teamBConnected.length > 0 && room.pausedFromPhase) {
+        room.phase = room.pausedFromPhase;
+        room.pausedFromPhase = null;
+        this.broadcastPhaseChanged(room);
+      }
+      return;
+    }
+
+    if (!gameplayPhases.includes(room.phase)) return;
+
+    const teamAConnected = room.players.filter((p) => p.team === Team.A && p.connected);
+    const teamBConnected = room.players.filter((p) => p.team === Team.B && p.connected);
+
+    if (teamAConnected.length === 0 || teamBConnected.length === 0) {
+      // If a turn is active, end it first
+      if (room.phase === GamePhase.TurnActive) {
+        this.endTurn(room);
+      }
+
+      room.pausedFromPhase = room.phase;
+      room.phase = GamePhase.Paused;
+
+      const emptyTeam = teamAConnected.length === 0 ? "A" : "B";
+      this.broadcastToRoom(room.code, {
+        type: ServerMessageType.GamePaused,
+        reason: `Team ${emptyTeam} has no connected players`,
+      });
+    }
   }
 
   /**
@@ -246,8 +354,8 @@ export class RoomManager {
   private handleRandomizeTeams(room: Room, sender: Player): string | null {
     if (!sender.isHost) return "Only the host can randomize teams";
 
-    // Shuffle players array copy using Fisher-Yates
-    const shuffled = [...room.players];
+    // Shuffle connected players using Fisher-Yates
+    const shuffled = room.players.filter((p) => p.connected);
     for (let i = shuffled.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
@@ -319,8 +427,10 @@ export class RoomManager {
     // Broadcast updated room state so all clients see slip submission progress
     this.broadcastRoomState(room.code);
 
-    // Check if all players have submitted — transition to playing
-    const allSubmitted = room.players.every((p) => p.slips.length === 4);
+    // Check if all connected players have submitted — transition to playing
+    const allSubmitted = room.players
+      .filter((p) => p.connected)
+      .every((p) => p.slips.length === 4);
     if (allSubmitted) {
       room.phase = GamePhase.Playing;
 
@@ -350,9 +460,9 @@ export class RoomManager {
     }
     if (room.slipPool.length === 0) return "No slips in the pool";
 
-    // Determine clue-giver from the active team
-    const teamPlayers = room.players.filter((p) => p.team === room.activeTeam);
-    if (teamPlayers.length === 0) return "No players on the active team";
+    // Determine clue-giver from connected players on the active team
+    const teamPlayers = room.players.filter((p) => p.team === room.activeTeam && p.connected);
+    if (teamPlayers.length === 0) return "No connected players on the active team";
 
     const clueGiverIdx = room.clueGiverIndex[room.activeTeam] % teamPlayers.length;
     const clueGiver = teamPlayers[clueGiverIdx];
@@ -486,6 +596,7 @@ export class RoomManager {
     room.turnGuessed = [];
     room.turnSkipped = [];
     room.carryoverTime = 0;
+    room.pausedFromPhase = null;
 
     // Clear player slips so they can submit new ones
     for (const p of room.players) {
@@ -621,9 +732,9 @@ export class RoomManager {
       // Normal turn end — pool still has slips
       room.phase = GamePhase.TurnEnd;
 
-      // Advance clue-giver index for the active team
+      // Advance clue-giver index for the active team (connected players only)
       const teamPlayers = room.players.filter(
-        (p) => p.team === room.activeTeam,
+        (p) => p.team === room.activeTeam && p.connected,
       );
       if (teamPlayers.length > 0) {
         room.clueGiverIndex[room.activeTeam] =

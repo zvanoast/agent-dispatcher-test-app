@@ -27,6 +27,8 @@ export enum GamePhase {
   RoundEnd = "round-end",
   /** Game over, showing final scores */
   GameOver = "game-over",
+  /** Game paused because a team has no connected players */
+  Paused = "paused",
 }
 
 /** A slip of paper with a name on it */
@@ -75,6 +77,8 @@ export interface Room {
   allSlips: Slip[];
   /** Seconds carried over from the previous round's last turn */
   carryoverTime: number;
+  /** Phase the game was in before pausing (null when not paused) */
+  pausedFromPhase: GamePhase | null;
   createdAt: number;
   lastActivityAt: number;
 }
@@ -189,6 +193,8 @@ export enum ServerMessageType {
   GameOver = "game-over",
   /** Room was created (sent to the host) */
   RoomCreated = "room-created",
+  /** Game paused because a team has no connected players */
+  GamePaused = "game-paused",
 }
 
 /** Sanitized room state sent to clients (hides slip text when appropriate) */
@@ -275,6 +281,11 @@ export interface RoomCreatedMessage {
   roomId: string;
 }
 
+export interface GamePausedMessage {
+  type: ServerMessageType.GamePaused;
+  reason: string;
+}
+
 export type ServerMessage =
   | RoomStateMessage
   | ErrorMessage
@@ -289,4 +300,5 @@ export type ServerMessage =
   | TurnEndedMessage
   | RoundEndedMessage
   | GameOverMessage
-  | RoomCreatedMessage;
+  | RoomCreatedMessage
+  | GamePausedMessage;
