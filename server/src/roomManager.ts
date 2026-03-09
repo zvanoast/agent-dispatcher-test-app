@@ -59,6 +59,8 @@ export class RoomManager {
   private rooms = new Map<string, Room>();
   /** player ID → ConnectedClient */
   private clients = new Map<string, ConnectedClient>();
+  /** room code → active turn timer interval */
+  private turnTimers = new Map<string, ReturnType<typeof setInterval>>();
 
   /** Generate a unique room code not already in use */
   private generateUniqueCode(): string {
@@ -201,6 +203,12 @@ export class RoomManager {
         return this.handleRandomizeTeams(room, player);
       case ClientMessageType.SubmitSlips:
         return this.handleSubmitSlips(room, player, message.texts);
+      case ClientMessageType.StartTurn:
+        return this.handleStartTurn(room, player);
+      case ClientMessageType.GotIt:
+        return this.handleGotIt(room, player);
+      case ClientMessageType.Skip:
+        return this.handleSkip(room, player);
       default:
         return `Unhandled message type: ${message.type}`;
     }
@@ -279,6 +287,216 @@ export class RoomManager {
     }
 
     return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Turn Engine
+  // ---------------------------------------------------------------------------
+
+  private handleStartTurn(room: Room, player: Player): string | null {
+    if (!player.isHost) return "Only the host can start a turn";
+    if (room.phase !== GamePhase.Playing && room.phase !== GamePhase.TurnEnd) {
+      return "Cannot start a turn in current phase";
+    }
+    if (room.slipPool.length === 0) return "No slips in the pool";
+
+    // Determine clue-giver from the active team
+    const teamPlayers = room.players.filter((p) => p.team === room.activeTeam);
+    if (teamPlayers.length === 0) return "No players on the active team";
+
+    const clueGiverIdx = room.clueGiverIndex[room.activeTeam] % teamPlayers.length;
+    const clueGiver = teamPlayers[clueGiverIdx];
+
+    room.activeClueGiverId = clueGiver.id;
+    room.phase = GamePhase.TurnActive;
+    room.turnTimeRemaining = 30;
+    room.turnGuessed = [];
+    room.turnSkipped = [];
+
+    // Draw first slip
+    this.drawNextSlip(room);
+
+    // Send turn-started: with currentSlip only to the clue-giver
+    for (const client of this.getClientsInRoom(room.code)) {
+      const msg: ServerMessage = {
+        type: ServerMessageType.TurnStarted,
+        clueGiverId: clueGiver.id,
+        team: room.activeTeam,
+        timeRemaining: room.turnTimeRemaining,
+        ...(client.playerId === clueGiver.id && room.currentSlip
+          ? { currentSlip: room.currentSlip }
+          : {}),
+      };
+      this.send(client.ws, msg);
+    }
+
+    room.lastActivityAt = Date.now();
+    this.startTurnTimer(room);
+    return null;
+  }
+
+  private handleGotIt(room: Room, player: Player): string | null {
+    if (room.phase !== GamePhase.TurnActive) return "No active turn";
+    if (player.id !== room.activeClueGiverId) return "Only the clue-giver can do this";
+    if (!room.currentSlip) return "No current slip";
+
+    // Score +1 for the active team
+    room.scores[room.activeTeam] += 1;
+    room.turnGuessed.push(room.currentSlip);
+
+    // Remove from pool
+    const guessedId = room.currentSlip.id;
+    room.slipPool = room.slipPool.filter((s) => s.id !== guessedId);
+
+    // Broadcast slip-guessed to all
+    this.broadcastToRoom(room.code, {
+      type: ServerMessageType.SlipGuessed,
+      slip: room.currentSlip,
+      team: room.activeTeam,
+    });
+
+    room.lastActivityAt = Date.now();
+
+    // If pool is empty, the round is over — end turn
+    if (room.slipPool.length === 0) {
+      this.endTurn(room);
+      return null;
+    }
+
+    // Draw next slip and send to clue-giver
+    this.drawNextSlip(room);
+    this.sendCurrentSlipToClueGiver(room);
+    return null;
+  }
+
+  private handleSkip(room: Room, player: Player): string | null {
+    if (room.phase !== GamePhase.TurnActive) return "No active turn";
+    if (player.id !== room.activeClueGiverId) return "Only the clue-giver can do this";
+    if (!room.currentSlip) return "No current slip";
+
+    // Mark as skipped this turn (prevents re-draw)
+    room.turnSkipped.push(room.currentSlip.id);
+
+    // Deduct 5 seconds penalty
+    room.turnTimeRemaining = Math.max(0, room.turnTimeRemaining - 5);
+
+    // Broadcast skip to all
+    this.broadcastToRoom(room.code, {
+      type: ServerMessageType.SlipSkipped,
+    });
+
+    // Broadcast updated time after penalty
+    this.broadcastToRoom(room.code, {
+      type: ServerMessageType.TimerTick,
+      timeRemaining: room.turnTimeRemaining,
+    });
+
+    room.lastActivityAt = Date.now();
+
+    // Check if time ran out due to penalty
+    if (room.turnTimeRemaining <= 0) {
+      this.endTurn(room);
+      return null;
+    }
+
+    // Draw next unskipped slip
+    this.drawNextSlip(room);
+
+    if (!room.currentSlip) {
+      // All remaining slips have been skipped this turn
+      this.endTurn(room);
+      return null;
+    }
+
+    this.sendCurrentSlipToClueGiver(room);
+    return null;
+  }
+
+  /** Draw the next unskipped slip from the pool */
+  private drawNextSlip(room: Room): void {
+    const available = room.slipPool.filter(
+      (s) => !room.turnSkipped.includes(s.id)
+    );
+    room.currentSlip = available.length > 0 ? available[0] : null;
+  }
+
+  /** Send the current slip to the clue-giver only */
+  private sendCurrentSlipToClueGiver(room: Room): void {
+    if (!room.currentSlip || !room.activeClueGiverId) return;
+    const client = this.clients.get(room.activeClueGiverId);
+    if (!client) return;
+    this.send(client.ws, {
+      type: ServerMessageType.TurnStarted,
+      clueGiverId: room.activeClueGiverId,
+      team: room.activeTeam,
+      timeRemaining: room.turnTimeRemaining,
+      currentSlip: room.currentSlip,
+    });
+  }
+
+  /** Start the server-authoritative turn timer */
+  private startTurnTimer(room: Room): void {
+    this.clearTurnTimer(room.code);
+    const interval = setInterval(() => {
+      room.turnTimeRemaining -= 1;
+
+      this.broadcastToRoom(room.code, {
+        type: ServerMessageType.TimerTick,
+        timeRemaining: room.turnTimeRemaining,
+      });
+
+      if (room.turnTimeRemaining <= 0) {
+        this.endTurn(room);
+      }
+    }, 1000);
+    this.turnTimers.set(room.code, interval);
+  }
+
+  /** Clear an active turn timer */
+  private clearTurnTimer(roomCode: string): void {
+    const timer = this.turnTimers.get(roomCode);
+    if (timer) {
+      clearInterval(timer);
+      this.turnTimers.delete(roomCode);
+    }
+  }
+
+  /** End the current turn */
+  private endTurn(room: Room): void {
+    this.clearTurnTimer(room.code);
+
+    room.phase = GamePhase.TurnEnd;
+    room.currentSlip = null;
+
+    // Advance clue-giver index for the active team
+    const teamPlayers = room.players.filter((p) => p.team === room.activeTeam);
+    if (teamPlayers.length > 0) {
+      room.clueGiverIndex[room.activeTeam] =
+        (room.clueGiverIndex[room.activeTeam] + 1) % teamPlayers.length;
+    }
+
+    // Switch active team
+    room.activeTeam = room.activeTeam === Team.A ? Team.B : Team.A;
+    room.activeClueGiverId = null;
+    room.turnTimeRemaining = 0;
+
+    // Broadcast turn-ended
+    this.broadcastToRoom(room.code, {
+      type: ServerMessageType.TurnEnded,
+      guessedCount: room.turnGuessed.length,
+      scores: { ...room.scores },
+    });
+
+    room.turnGuessed = [];
+    room.turnSkipped = [];
+    room.lastActivityAt = Date.now();
+  }
+
+  /** Broadcast a message to all clients in a room */
+  private broadcastToRoom(roomCode: string, message: ServerMessage): void {
+    for (const client of this.getClientsInRoom(roomCode)) {
+      this.send(client.ws, message);
+    }
   }
 
   private broadcastTeamsUpdated(room: Room): void {

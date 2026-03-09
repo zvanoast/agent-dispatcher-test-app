@@ -225,6 +225,8 @@ export interface TurnStartedMessage {
   clueGiverId: string;
   team: Team;
   timeRemaining: number;
+  /** The current slip — only sent to the active clue-giver */
+  currentSlip?: Slip;
 }
 
 export interface TimerTickMessage {
