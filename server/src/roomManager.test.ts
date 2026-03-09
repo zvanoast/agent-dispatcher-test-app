@@ -1348,5 +1348,237 @@ describe("RoomManager", () => {
       });
     });
   });
+
+  describe("player disconnect during gameplay", () => {
+    /**
+     * Sets up a 4-player room in Playing phase (like setupPlayingRoom in the
+     * turn-engine tests) and returns all websockets plus the room.
+     */
+    function setupGameRoom() {
+      vi.useFakeTimers();
+      const ws1 = mockWs();
+      const ws2 = mockWs();
+      const ws3 = mockWs();
+      const ws4 = mockWs();
+      rm.handleConnection(ws1, "AB12", "Alice"); // host
+      rm.handleConnection(ws2, "AB12", "Bob");
+      rm.handleConnection(ws3, "AB12", "Carol");
+      rm.handleConnection(ws4, "AB12", "Dave");
+
+      const room = rm.getRoom("AB12")!;
+      // Assign teams
+      room.players[0].team = Team.A; // Alice
+      room.players[1].team = Team.A; // Bob
+      room.players[2].team = Team.B; // Carol
+      room.players[3].team = Team.B; // Dave
+
+      // Set up slips and transition to Playing
+      room.phase = GamePhase.Playing;
+      const slips: Slip[] = [
+        { id: "s1", text: "Einstein", submittedBy: room.players[0].id },
+        { id: "s2", text: "Beyoncé", submittedBy: room.players[0].id },
+        { id: "s3", text: "Pikachu", submittedBy: room.players[1].id },
+        { id: "s4", text: "Cleopatra", submittedBy: room.players[1].id },
+        { id: "s5", text: "Mozart", submittedBy: room.players[2].id },
+        { id: "s6", text: "Godzilla", submittedBy: room.players[2].id },
+        { id: "s7", text: "Sherlock", submittedBy: room.players[3].id },
+        { id: "s8", text: "Gandalf", submittedBy: room.players[3].id },
+      ];
+      room.slipPool = [...slips];
+      room.allSlips = [...slips];
+      room.activeTeam = Team.A;
+
+      ws1.send.mockClear();
+      ws2.send.mockClear();
+      ws3.send.mockClear();
+      ws4.send.mockClear();
+
+      return { ws1, ws2, ws3, ws4, room };
+    }
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    describe("clue-giver disconnect", () => {
+      it("ends the turn immediately when the active clue-giver disconnects", () => {
+        const { ws1, ws2, ws3, ws4, room } = setupGameRoom();
+
+        // Start a turn — Alice (Team A) is clue-giver
+        rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
+        expect(room.phase).toBe(GamePhase.TurnActive);
+        expect(room.activeClueGiverId).toBe(room.players[0].id); // Alice
+
+        // Clear mocks before disconnect
+        ws2.send.mockClear();
+        ws3.send.mockClear();
+        ws4.send.mockClear();
+
+        // Disconnect Alice (the clue-giver)
+        rm.handleDisconnect(ws1);
+
+        // Turn should have ended — phase should be TurnEnd (not TurnActive)
+        expect(room.phase).toBe(GamePhase.TurnEnd);
+        // Alice should be marked disconnected, not removed
+        const alice = room.players.find((p) => p.name === "Alice")!;
+        expect(alice.connected).toBe(false);
+      });
+
+      it("awards no additional points when clue-giver disconnects mid-turn", () => {
+        const { ws1, ws2, ws3, ws4, room } = setupGameRoom();
+
+        rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
+        const scoreBefore = room.scores[Team.A];
+
+        rm.handleDisconnect(ws1);
+
+        // No additional points awarded
+        expect(room.scores[Team.A]).toBe(scoreBefore);
+      });
+
+      it("clears the turn timer when clue-giver disconnects", () => {
+        const { ws1, room } = setupGameRoom();
+
+        rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
+        expect(room.phase).toBe(GamePhase.TurnActive);
+
+        rm.handleDisconnect(ws1);
+
+        // Advancing time should not change anything (timer cleared)
+        const phaseAfter = room.phase;
+        vi.advanceTimersByTime(35000);
+        expect(room.phase).toBe(phaseAfter);
+      });
+    });
+
+    describe("host disconnect during gameplay", () => {
+      it("transfers host to another connected player when host disconnects", () => {
+        const { ws1, room } = setupGameRoom();
+
+        expect(room.players[0].isHost).toBe(true); // Alice is host
+        rm.handleDisconnect(ws1);
+
+        const alice = room.players.find((p) => p.name === "Alice")!;
+        expect(alice.isHost).toBe(false);
+        expect(alice.connected).toBe(false);
+
+        // Another connected player should be host
+        const connectedHost = room.players.find((p) => p.isHost && p.connected);
+        expect(connectedHost).toBeDefined();
+      });
+
+      it("preserves disconnected player scores and slips", () => {
+        const { ws1, room } = setupGameRoom();
+
+        // Give Alice some slips
+        const alice = room.players.find((p) => p.name === "Alice")!;
+        alice.slips = [{ id: "test1", text: "Test", submittedBy: alice.id }];
+
+        rm.handleDisconnect(ws1);
+
+        // Alice should still be in the roster with slips preserved
+        const aliceAfter = room.players.find((p) => p.name === "Alice")!;
+        expect(aliceAfter).toBeDefined();
+        expect(aliceAfter.connected).toBe(false);
+        expect(aliceAfter.slips).toHaveLength(1);
+        expect(aliceAfter.team).toBe(Team.A);
+      });
+    });
+
+    describe("team-empty pause", () => {
+      it("pauses the game when a team has no connected players", () => {
+        const { ws3, ws4, room } = setupGameRoom();
+
+        // Disconnect both Team B players (Carol and Dave)
+        rm.handleDisconnect(ws3);
+        rm.handleDisconnect(ws4);
+
+        expect(room.phase).toBe(GamePhase.Paused);
+        expect(room.pausedFromPhase).toBe(GamePhase.Playing);
+      });
+
+      it("broadcasts a game-paused message when team becomes empty", () => {
+        const { ws1, ws3, ws4, room } = setupGameRoom();
+        ws1.send.mockClear();
+
+        rm.handleDisconnect(ws3);
+        rm.handleDisconnect(ws4);
+
+        // Find the game-paused message sent to ws1
+        const messages = ws1.send.mock.calls.map((c: any) => JSON.parse(c[0]));
+        const pausedMsg = messages.find(
+          (m: any) => m.type === ServerMessageType.GamePaused,
+        );
+        expect(pausedMsg).toBeDefined();
+        expect(pausedMsg.reason).toContain("Team B");
+      });
+
+      it("unpauses the game when a player reconnects to the empty team", () => {
+        const { ws3, ws4, room } = setupGameRoom();
+
+        // Disconnect both Team B players
+        rm.handleDisconnect(ws3);
+        rm.handleDisconnect(ws4);
+        expect(room.phase).toBe(GamePhase.Paused);
+
+        // Carol reconnects
+        const ws3b = mockWs();
+        rm.handleConnection(ws3b, "AB12", "Carol");
+
+        expect(room.phase).toBe(GamePhase.Playing);
+        expect(room.pausedFromPhase).toBeNull();
+      });
+
+      it("pauses and ends the turn when clue-giver's entire team disconnects mid-turn", () => {
+        const { ws1, ws2, room } = setupGameRoom();
+
+        // Start a turn — Team A active
+        rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
+        expect(room.phase).toBe(GamePhase.TurnActive);
+
+        // Disconnect both Team A players (Alice and Bob)
+        rm.handleDisconnect(ws1); // clue-giver disconnect ends turn
+        rm.handleDisconnect(ws2); // team now empty → pause
+
+        expect(room.phase).toBe(GamePhase.Paused);
+        // The turn should have been ended
+        expect(room.activeClueGiverId).toBeNull();
+      });
+    });
+
+    describe("lobby disconnect still removes players", () => {
+      it("removes the player entirely when disconnecting in lobby phase", () => {
+        const ws1 = mockWs();
+        const ws2 = mockWs();
+        rm.handleConnection(ws1, "AB12", "Alice");
+        rm.handleConnection(ws2, "AB12", "Bob");
+
+        rm.handleDisconnect(ws2);
+
+        const room = rm.getRoom("AB12")!;
+        expect(room.players).toHaveLength(1);
+        expect(room.players.find((p) => p.name === "Bob")).toBeUndefined();
+      });
+    });
+
+    describe("reconnection", () => {
+      it("reconnects a disconnected player preserving team and slips", () => {
+        const { ws1, room } = setupGameRoom();
+        const alice = room.players.find((p) => p.name === "Alice")!;
+        const aliceId = alice.id;
+
+        rm.handleDisconnect(ws1);
+        expect(alice.connected).toBe(false);
+
+        // Alice reconnects
+        const ws1b = mockWs();
+        rm.handleConnection(ws1b, "AB12", "Alice");
+
+        expect(alice.connected).toBe(true);
+        expect(alice.id).toBe(aliceId); // same player record
+        expect(alice.team).toBe(Team.A);
+      });
+    });
+  });
 });
 
