@@ -24,23 +24,50 @@ A complete, playable game loop for one room. All three rounds. Full scoring. Hos
 
 ### Definition of Done
 
-- [ ] A host can create a room and share a code
-- [ ] 2–8 players can join by entering the room code
-- [ ] Players can be assigned to Team A or Team B (manual or randomized)
-- [ ] Each player submits 4 slips before the game starts
-- [ ] All three rounds play correctly with the same slip pool reshuffled each round
-- [ ] 30-second server-authoritative timer per turn with 5-second skip penalty
-- [ ] Skipped slips go to the bottom and cannot be re-drawn in the same turn
-- [ ] Scores accumulate correctly across all rounds
-- [ ] Carryover time works when the last slip of a round is guessed mid-turn
-- [ ] Game over screen shows final scores and winner
-- [ ] Host can start a new game (same players, new slips)
-- [ ] Works on mobile browsers (no install)
-- [ ] No known crashes or stuck states during normal play
+- [x] A host can create a room and share a code
+- [x] 2–8 players can join by entering the room code
+- [x] Players can be assigned to Team A or Team B (manual or randomized)
+- [x] Each player submits 4 slips before the game starts
+- [x] All three rounds play correctly with the same slip pool reshuffled each round
+- [x] 30-second server-authoritative timer per turn with 5-second skip penalty
+- [x] Skipped slips go to the bottom and cannot be re-drawn in the same turn
+- [x] Scores accumulate correctly across all rounds
+- [x] Carryover time works when the last slip of a round is guessed mid-turn
+- [x] Game over screen shows final scores and winner
+- [x] Host can start a new game (same players, new slips)
+- [x] Works on mobile browsers (no install)
+- [x] No known crashes or stuck states during normal play
 
 ## Completed Work
 
-_Nothing yet. Greenfield._
+M1 is functionally complete. The full game loop is playable end-to-end.
+
+### Infrastructure
+- **Monorepo scaffold** — `server/`, `client/`, `shared/` packages with TypeScript throughout (PR #12)
+- **Configurable ports** — server and client ports via environment variables (PR #27)
+- **README** — setup instructions, usage guide, and game rules (PR #25)
+
+### Server — Game Engine
+- **RoomManager with WebSocket support** — room creation, join/leave, host transfer (PR #19)
+- **Team assignment & slip submission** — manual/random team assignment, slip submission, phase transitions (PR #20)
+- **Turn & timer engine** — start-turn, got-it, skip with 5-second penalty, server-authoritative 30-second timer (PR #21)
+- **Round progression & game-over** — all three rounds with reshuffled slip pool, carryover time, final scores, new-game reset (PR #22)
+- **Start-game handler** — lobby-to-submitting phase transition with host controls (PR #33)
+- **Player count enforcement** — 2–8 player limits enforced server-side (PR #34)
+- **Graceful disconnect handling** — players can disconnect and the game continues without crashing (PR #35)
+
+### Client
+- **Join, lobby, and game UI** — mobile-friendly screens for joining by room code, lobby view, and full gameplay UI (PR #23)
+
+### Testing
+- **168 unit/integration tests** passing across RoomManager and game logic
+- **End-to-end smoke test** — automated full game loop verification (PR #36)
+
+### Remaining Polish (Post-M1)
+- No deployment yet (M2 scope per Upcoming Priorities)
+- No reconnection grace period (M2 scope)
+- No animations or sound cues (M2 scope)
+- TV/host-screen display mode deferred to M2
 
 ## Upcoming Priorities (Post-M1)
 
