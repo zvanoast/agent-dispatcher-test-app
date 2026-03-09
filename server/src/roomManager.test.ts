@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { RoomManager } from "./roomManager.js";
+import { RoomManager, MAX_PLAYERS, MIN_PLAYERS } from "./roomManager.js";
 import { GamePhase, ServerMessageType, ClientMessageType, Team } from "@fishbowl/shared";
 import type { Slip } from "@fishbowl/shared";
 
@@ -1194,39 +1194,50 @@ describe("RoomManager", () => {
     });
 
     describe("start-game", () => {
+      /** Helper: add N players to a room, assign teams, return their websockets */
+      function fillRoom(rm: RoomManager, code: string, count: number): any[] {
+        const sockets: any[] = [];
+        const names = ["Alice", "Bob", "Carol", "Dave", "Eve", "Frank", "Grace", "Hank"];
+        for (let i = 0; i < count; i++) {
+          const ws = mockWs();
+          rm.handleConnection(ws, code, names[i]);
+          sockets.push(ws);
+        }
+        const room = rm.getRoom(code)!;
+        // Assign teams: first half Team A, rest Team B
+        const half = Math.ceil(room.players.length / 2);
+        room.players.forEach((p, i) => {
+          p.team = i < half ? Team.A : Team.B;
+        });
+        return sockets;
+      }
+
       it("host transitions room from Lobby to Submitting", () => {
-        const ws1 = mockWs();
-        const ws2 = mockWs();
-        rm.handleConnection(ws1, "AB12", "Alice");
-        rm.handleConnection(ws2, "AB12", "Bob");
+        const sockets = fillRoom(rm, "AB12", MIN_PLAYERS);
         const room = rm.getRoom("AB12")!;
         expect(room.phase).toBe(GamePhase.Lobby);
 
-        ws1.send.mockClear();
-        ws2.send.mockClear();
+        sockets.forEach((ws: any) => ws.send.mockClear());
 
-        const err = rm.handleMessage(ws1, { type: ClientMessageType.StartGame });
+        const err = rm.handleMessage(sockets[0], { type: ClientMessageType.StartGame });
         expect(err).toBeNull();
         expect(room.phase).toBe(GamePhase.Submitting);
 
-        // Both clients should receive a phase-changed broadcast
-        const msg1 = JSON.parse(ws1.send.mock.calls[0][0]);
+        // All clients should receive a phase-changed broadcast
+        const msg1 = JSON.parse(sockets[0].send.mock.calls[0][0]);
         expect(msg1.type).toBe(ServerMessageType.PhaseChanged);
         expect(msg1.phase).toBe(GamePhase.Submitting);
 
-        const msg2 = JSON.parse(ws2.send.mock.calls[0][0]);
+        const msg2 = JSON.parse(sockets[1].send.mock.calls[0][0]);
         expect(msg2.type).toBe(ServerMessageType.PhaseChanged);
         expect(msg2.phase).toBe(GamePhase.Submitting);
       });
 
       it("rejects start-game from non-host player", () => {
-        const ws1 = mockWs();
-        const ws2 = mockWs();
-        rm.handleConnection(ws1, "AB12", "Alice");
-        rm.handleConnection(ws2, "AB12", "Bob");
+        const sockets = fillRoom(rm, "AB12", MIN_PLAYERS);
         const room = rm.getRoom("AB12")!;
 
-        const err = rm.handleMessage(ws2, { type: ClientMessageType.StartGame });
+        const err = rm.handleMessage(sockets[1], { type: ClientMessageType.StartGame });
         expect(err).toBe("Only the host can start the game");
         expect(room.phase).toBe(GamePhase.Lobby);
       });
@@ -1239,6 +1250,101 @@ describe("RoomManager", () => {
 
         const err = rm.handleMessage(ws1, { type: ClientMessageType.StartGame });
         expect(err).toBe("Game can only be started from the lobby");
+      });
+
+      it("rejects start-game with fewer than MIN_PLAYERS", () => {
+        // Add only MIN_PLAYERS - 1 players
+        const count = MIN_PLAYERS - 1;
+        const sockets = fillRoom(rm, "AB12", count);
+        const room = rm.getRoom("AB12")!;
+
+        const err = rm.handleMessage(sockets[0], { type: ClientMessageType.StartGame });
+        expect(err).toBe(`Need at least ${MIN_PLAYERS} players to start (currently ${count})`);
+        expect(room.phase).toBe(GamePhase.Lobby);
+      });
+
+      it("rejects start-game when a player is unassigned to a team", () => {
+        const sockets = fillRoom(rm, "AB12", MIN_PLAYERS);
+        const room = rm.getRoom("AB12")!;
+        // Unassign the last player
+        room.players[room.players.length - 1].team = null;
+
+        const err = rm.handleMessage(sockets[0], { type: ClientMessageType.StartGame });
+        expect(err).toBe("All players must be assigned to a team before starting");
+        expect(room.phase).toBe(GamePhase.Lobby);
+      });
+
+      it("rejects start-game when a team has zero players", () => {
+        const sockets = fillRoom(rm, "AB12", MIN_PLAYERS);
+        const room = rm.getRoom("AB12")!;
+        // Put everyone on Team A
+        room.players.forEach((p) => { p.team = Team.A; });
+
+        const err = rm.handleMessage(sockets[0], { type: ClientMessageType.StartGame });
+        expect(err).toBe("Both teams must have at least one player");
+        expect(room.phase).toBe(GamePhase.Lobby);
+      });
+
+      it("allows start-game at exactly MIN_PLAYERS with valid teams", () => {
+        const sockets = fillRoom(rm, "AB12", MIN_PLAYERS);
+        const room = rm.getRoom("AB12")!;
+
+        const err = rm.handleMessage(sockets[0], { type: ClientMessageType.StartGame });
+        expect(err).toBeNull();
+        expect(room.phase).toBe(GamePhase.Submitting);
+      });
+    });
+
+    describe("player count limits", () => {
+      it("rejects join-room when room already has MAX_PLAYERS", () => {
+        const names = ["Alice", "Bob", "Carol", "Dave", "Eve", "Frank", "Grace", "Hank"];
+        for (let i = 0; i < MAX_PLAYERS; i++) {
+          const ws = mockWs();
+          const err = rm.handleConnection(ws, "AB12", names[i]);
+          expect(err).toBeNull();
+        }
+
+        const room = rm.getRoom("AB12")!;
+        expect(room.players).toHaveLength(MAX_PLAYERS);
+
+        // 9th player should be rejected
+        const ws9 = mockWs();
+        const err = rm.handleConnection(ws9, "AB12", "Ivy");
+        expect(err).toBe("Room is full (maximum 8 players)");
+        expect(room.players).toHaveLength(MAX_PLAYERS);
+      });
+
+      it("allows joining after a player disconnects from a full room", () => {
+        const names = ["Alice", "Bob", "Carol", "Dave", "Eve", "Frank", "Grace", "Hank"];
+        const sockets: any[] = [];
+        for (let i = 0; i < MAX_PLAYERS; i++) {
+          const ws = mockWs();
+          rm.handleConnection(ws, "AB12", names[i]);
+          sockets.push(ws);
+        }
+
+        // Disconnect one player
+        rm.handleDisconnect(sockets[7]);
+
+        // Now a new player should be able to join
+        const ws9 = mockWs();
+        const err = rm.handleConnection(ws9, "AB12", "Ivy");
+        expect(err).toBeNull();
+
+        const room = rm.getRoom("AB12")!;
+        expect(room.players).toHaveLength(MAX_PLAYERS);
+      });
+
+      it("allows exactly MAX_PLAYERS to join", () => {
+        const names = ["Alice", "Bob", "Carol", "Dave", "Eve", "Frank", "Grace", "Hank"];
+        for (let i = 0; i < MAX_PLAYERS; i++) {
+          const ws = mockWs();
+          const err = rm.handleConnection(ws, "AB12", names[i]);
+          expect(err).toBeNull();
+        }
+
+        const room = rm.getRoom("AB12")!;
+        expect(room.players).toHaveLength(MAX_PLAYERS);
       });
     });
   });
