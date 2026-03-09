@@ -502,6 +502,7 @@ describe("RoomManager", () => {
         { id: "s8", text: "Gandalf", submittedBy: room.players[3].id },
       ];
       room.slipPool = [...slips];
+      room.allSlips = [...slips];
       room.activeTeam = Team.A;
 
       // Clear all mock calls from setup
@@ -734,20 +735,23 @@ describe("RoomManager", () => {
     });
 
     describe("turn-end conditions", () => {
-      it("turn ends when all slips in pool are guessed (pool empty)", () => {
+      it("turn ends and round ends when all slips in pool are guessed (pool empty)", () => {
         const { ws1, room } = setupPlayingRoom();
         // Small pool: 2 slips
         room.slipPool = [
           { id: "s1", text: "Einstein", submittedBy: "p1" },
           { id: "s2", text: "Beyoncé", submittedBy: "p1" },
         ];
+        room.allSlips = [...room.slipPool];
 
         rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
         rm.handleMessage(ws1, { type: ClientMessageType.GotIt }); // s1
         rm.handleMessage(ws1, { type: ClientMessageType.GotIt }); // s2
 
-        expect(room.phase).toBe(GamePhase.TurnEnd);
-        expect(room.slipPool).toHaveLength(0);
+        // Pool empty triggers round end (round 1 → round 2)
+        expect(room.phase).toBe(GamePhase.RoundEnd);
+        // Pool reshuffled with all slips
+        expect(room.slipPool).toHaveLength(2);
         expect(room.scores[Team.A]).toBe(2);
       });
 
@@ -773,19 +777,20 @@ describe("RoomManager", () => {
 
       it("turn-ended message includes correct guessedCount and scores", () => {
         const { ws1, ws2, room } = setupPlayingRoom();
-        room.slipPool = [
-          { id: "s1", text: "Einstein", submittedBy: "p1" },
-          { id: "s2", text: "Beyoncé", submittedBy: "p1" },
-        ];
+        // 8 slips in pool (from setupPlayingRoom), guess 2 then let timer expire
 
         rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
+
+        rm.handleMessage(ws1, { type: ClientMessageType.GotIt }); // s1
+        rm.handleMessage(ws1, { type: ClientMessageType.GotIt }); // s2
+
         ws1.send.mockClear();
         ws2.send.mockClear();
 
-        rm.handleMessage(ws1, { type: ClientMessageType.GotIt }); // s1
-        rm.handleMessage(ws1, { type: ClientMessageType.GotIt }); // s2 → pool empty → turn ends
+        // Let timer expire to end the turn normally (pool still has 6 slips)
+        vi.advanceTimersByTime(30_000);
 
-        // Find TurnEnded in ws2 messages (non-clue-giver to avoid extra messages)
+        // Find TurnEnded in ws2 messages
         const allMsgs = ws2.send.mock.calls.map((c: any) => JSON.parse(c[0]));
         const turnEnded = allMsgs.find(
           (m: any) => m.type === ServerMessageType.TurnEnded
@@ -832,5 +837,361 @@ describe("RoomManager", () => {
         expect(room.activeClueGiverId).toBe(carolId);
       });
     });
+
+    // -------------------------------------------------------------------------
+    // Round Progression & Game Over
+    // -------------------------------------------------------------------------
+
+    describe("round progression", () => {
+      it("round ends when slip pool is empty, advancing describe → charades", () => {
+        const { ws1, ws2, room } = setupPlayingRoom();
+        room.slipPool = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+        room.allSlips = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+
+        rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
+        ws1.send.mockClear();
+        ws2.send.mockClear();
+
+        rm.handleMessage(ws1, { type: ClientMessageType.GotIt }); // pool empty
+
+        expect(room.phase).toBe(GamePhase.RoundEnd);
+        expect(room.roundNumber).toBe(2);
+        expect(room.round).toBe("charades");
+
+        // Pool reshuffled with all slips
+        expect(room.slipPool).toHaveLength(1);
+
+        // round-ended message sent
+        const allMsgs = ws2.send.mock.calls.map((c: any) => JSON.parse(c[0]));
+        const roundEnded = allMsgs.find(
+          (m: any) => m.type === ServerMessageType.RoundEnded
+        );
+        expect(roundEnded).toBeDefined();
+        expect(roundEnded.completedRound).toBe("describe");
+        expect(roundEnded.nextRound).toBe("charades");
+        expect(roundEnded.scores).toBeDefined();
+      });
+
+      it("advances charades → one-word", () => {
+        const { ws1, room } = setupPlayingRoom();
+        room.round = "charades" as any;
+        room.roundNumber = 2;
+        room.slipPool = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+        room.allSlips = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+
+        rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
+        rm.handleMessage(ws1, { type: ClientMessageType.GotIt });
+
+        expect(room.phase).toBe(GamePhase.RoundEnd);
+        expect(room.roundNumber).toBe(3);
+        expect(room.round).toBe("one-word");
+      });
+
+      it("all slips return to pool and are reshuffled between rounds", () => {
+        const { ws1, room } = setupPlayingRoom();
+        const allSlips = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+          { id: "s2", text: "Beyoncé", submittedBy: "p1" },
+          { id: "s3", text: "Pikachu", submittedBy: "p1" },
+        ];
+        room.slipPool = [...allSlips];
+        room.allSlips = [...allSlips];
+
+        rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
+
+        // Guess all slips to empty the pool
+        rm.handleMessage(ws1, { type: ClientMessageType.GotIt }); // s1
+        rm.handleMessage(ws1, { type: ClientMessageType.GotIt }); // s2
+        rm.handleMessage(ws1, { type: ClientMessageType.GotIt }); // s3
+
+        // All slips back in pool
+        expect(room.slipPool).toHaveLength(3);
+        const poolIds = room.slipPool.map((s) => s.id).sort();
+        expect(poolIds).toEqual(["s1", "s2", "s3"]);
+      });
+
+      it("host can start turn from round-end phase", () => {
+        const { ws1, room } = setupPlayingRoom();
+        room.slipPool = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+        room.allSlips = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+
+        rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
+        rm.handleMessage(ws1, { type: ClientMessageType.GotIt }); // round end
+
+        expect(room.phase).toBe(GamePhase.RoundEnd);
+
+        // Start turn in the new round
+        ws1.send.mockClear();
+        const err = rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
+        expect(err).toBeNull();
+        expect(room.phase).toBe(GamePhase.TurnActive);
+      });
+
+      it("does not switch active team when round ends (carryover team goes first)", () => {
+        const { ws1, room } = setupPlayingRoom();
+        room.slipPool = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+        room.allSlips = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+        room.activeTeam = Team.A;
+
+        rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
+        rm.handleMessage(ws1, { type: ClientMessageType.GotIt }); // round end
+
+        // Team A should still be active (they get carryover turn)
+        expect(room.activeTeam).toBe(Team.A);
+      });
+    });
+
+    describe("carryover time", () => {
+      it("carryover time is awarded when last slip guessed mid-turn", () => {
+        const { ws1, room } = setupPlayingRoom();
+        room.slipPool = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+        room.allSlips = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+
+        rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
+        // Timer starts at 30. Advance 10 seconds, leaving 20.
+        vi.advanceTimersByTime(10_000);
+
+        rm.handleMessage(ws1, { type: ClientMessageType.GotIt });
+
+        expect(room.carryoverTime).toBe(20);
+      });
+
+      it("turn-ended message includes carryoverTime when round ends mid-turn", () => {
+        const { ws1, ws2, room } = setupPlayingRoom();
+        room.slipPool = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+        room.allSlips = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+
+        rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
+        vi.advanceTimersByTime(5_000); // 25 seconds remaining
+        ws2.send.mockClear();
+
+        rm.handleMessage(ws1, { type: ClientMessageType.GotIt });
+
+        const allMsgs = ws2.send.mock.calls.map((c: any) => JSON.parse(c[0]));
+        const turnEnded = allMsgs.find(
+          (m: any) => m.type === ServerMessageType.TurnEnded
+        );
+        expect(turnEnded).toBeDefined();
+        expect(turnEnded.carryoverTime).toBe(25);
+      });
+
+      it("carryover time is used as turn duration for the next turn in new round", () => {
+        const { ws1, room } = setupPlayingRoom();
+        room.slipPool = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+        room.allSlips = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+
+        rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
+        vi.advanceTimersByTime(15_000); // 15 seconds remaining
+
+        rm.handleMessage(ws1, { type: ClientMessageType.GotIt }); // round end
+
+        expect(room.carryoverTime).toBe(15);
+
+        // Start next turn — should use carryover time
+        rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
+        expect(room.turnTimeRemaining).toBe(15);
+        expect(room.carryoverTime).toBe(0); // consumed
+      });
+
+      it("no carryover when round ends with timer at 0", () => {
+        const { ws1, room } = setupPlayingRoom();
+        room.slipPool = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+        room.allSlips = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+
+        rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
+        vi.advanceTimersByTime(29_000); // 1 second remaining
+        room.turnTimeRemaining = 0; // simulate exact 0
+
+        rm.handleMessage(ws1, { type: ClientMessageType.GotIt });
+
+        expect(room.carryoverTime).toBe(0);
+      });
+    });
+
+    describe("game over", () => {
+      it("game over after round 3 ends", () => {
+        const { ws1, ws2, room } = setupPlayingRoom();
+        room.round = "one-word" as any;
+        room.roundNumber = 3;
+        room.slipPool = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+        room.allSlips = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+
+        rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
+        ws2.send.mockClear();
+
+        rm.handleMessage(ws1, { type: ClientMessageType.GotIt });
+
+        expect(room.phase).toBe(GamePhase.GameOver);
+
+        // Check messages
+        const allMsgs = ws2.send.mock.calls.map((c: any) => JSON.parse(c[0]));
+
+        const roundEnded = allMsgs.find(
+          (m: any) => m.type === ServerMessageType.RoundEnded
+        );
+        expect(roundEnded).toBeDefined();
+        expect(roundEnded.completedRound).toBe("one-word");
+        expect(roundEnded.nextRound).toBeUndefined();
+
+        const gameOver = allMsgs.find(
+          (m: any) => m.type === ServerMessageType.GameOver
+        );
+        expect(gameOver).toBeDefined();
+        expect(gameOver.scores[Team.A]).toBe(1);
+        expect(gameOver.winner).toBe(Team.A);
+      });
+
+      it("game-over message shows correct winner (Team B)", () => {
+        const { ws1, ws2, room } = setupPlayingRoom();
+        room.round = "one-word" as any;
+        room.roundNumber = 3;
+        room.scores = { [Team.A]: 3, [Team.B]: 5 };
+        room.slipPool = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+        room.allSlips = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+
+        rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
+        ws2.send.mockClear();
+        rm.handleMessage(ws1, { type: ClientMessageType.GotIt });
+
+        const allMsgs = ws2.send.mock.calls.map((c: any) => JSON.parse(c[0]));
+        const gameOver = allMsgs.find(
+          (m: any) => m.type === ServerMessageType.GameOver
+        );
+        expect(gameOver.winner).toBe(Team.B);
+      });
+
+      it("game-over message shows tie when scores are equal", () => {
+        const { ws1, ws2, room } = setupPlayingRoom();
+        room.round = "one-word" as any;
+        room.roundNumber = 3;
+        room.scores = { [Team.A]: 5, [Team.B]: 5 };
+        room.slipPool = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+        room.allSlips = [
+          { id: "s1", text: "Einstein", submittedBy: "p1" },
+        ];
+        // Team A active, guessing adds +1 to Team A making it 6-5
+        // To get a tie: set A=4, B=5, then A guesses 1 making it 5-5
+        room.scores = { [Team.A]: 4, [Team.B]: 5 };
+
+        rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
+        ws2.send.mockClear();
+        rm.handleMessage(ws1, { type: ClientMessageType.GotIt });
+
+        const allMsgs = ws2.send.mock.calls.map((c: any) => JSON.parse(c[0]));
+        const gameOver = allMsgs.find(
+          (m: any) => m.type === ServerMessageType.GameOver
+        );
+        expect(gameOver.scores[Team.A]).toBe(5);
+        expect(gameOver.scores[Team.B]).toBe(5);
+        expect(gameOver.winner).toBe("tie");
+      });
+
+      it("cannot start turn after game over", () => {
+        const { ws1, room } = setupPlayingRoom();
+        room.phase = GamePhase.GameOver;
+        const err = rm.handleMessage(ws1, { type: ClientMessageType.StartTurn });
+        expect(err).toBe("Cannot start a turn in current phase");
+      });
+    });
+
+    describe("new-game", () => {
+      it("host can start new game after game over, resetting to submitting phase", () => {
+        const { ws1, ws2, room } = setupPlayingRoom();
+        room.phase = GamePhase.GameOver;
+        room.scores = { [Team.A]: 10, [Team.B]: 7 };
+        room.roundNumber = 3;
+        room.round = "one-word" as any;
+
+        ws1.send.mockClear();
+        ws2.send.mockClear();
+
+        const err = rm.handleMessage(ws1, { type: ClientMessageType.NewGame });
+        expect(err).toBeNull();
+
+        expect(room.phase).toBe(GamePhase.Submitting);
+        expect(room.round).toBe("describe");
+        expect(room.roundNumber).toBe(1);
+        expect(room.scores[Team.A]).toBe(0);
+        expect(room.scores[Team.B]).toBe(0);
+        expect(room.slipPool).toHaveLength(0);
+        expect(room.allSlips).toHaveLength(0);
+        expect(room.carryoverTime).toBe(0);
+
+        // Player slips cleared
+        for (const p of room.players) {
+          expect(p.slips).toHaveLength(0);
+        }
+
+        // Players still in room with teams intact
+        expect(room.players).toHaveLength(4);
+
+        // Phase-changed and room-state broadcasts sent
+        const allMsgs = ws2.send.mock.calls.map((c: any) => JSON.parse(c[0]));
+        const phaseMsg = allMsgs.find(
+          (m: any) => m.type === ServerMessageType.PhaseChanged
+        );
+        expect(phaseMsg).toBeDefined();
+        expect(phaseMsg.phase).toBe(GamePhase.Submitting);
+      });
+
+      it("non-host cannot start new game", () => {
+        const { ws2, room } = setupPlayingRoom();
+        room.phase = GamePhase.GameOver;
+
+        const err = rm.handleMessage(ws2, { type: ClientMessageType.NewGame });
+        expect(err).toBe("Only the host can start a new game");
+      });
+
+      it("cannot start new game unless in game-over phase", () => {
+        const { ws1, room } = setupPlayingRoom();
+        room.phase = GamePhase.Playing;
+
+        const err = rm.handleMessage(ws1, { type: ClientMessageType.NewGame });
+        expect(err).toBe("Can only start a new game after game over");
+      });
+    });
   });
 });
+

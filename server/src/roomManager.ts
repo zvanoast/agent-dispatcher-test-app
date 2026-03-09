@@ -49,6 +49,8 @@ function makeDefaultRoom(code: string): Room {
     turnTimeRemaining: 0,
     turnGuessed: [],
     turnSkipped: [],
+    allSlips: [],
+    carryoverTime: 0,
     createdAt: Date.now(),
     lastActivityAt: Date.now(),
   };
@@ -209,6 +211,8 @@ export class RoomManager {
         return this.handleGotIt(room, player);
       case ClientMessageType.Skip:
         return this.handleSkip(room, player);
+      case ClientMessageType.NewGame:
+        return this.handleNewGame(room, player);
       default:
         return `Unhandled message type: ${message.type}`;
     }
@@ -279,8 +283,9 @@ export class RoomManager {
     if (allSubmitted) {
       room.phase = GamePhase.Playing;
 
-      // Collect all slips into the pool
-      room.slipPool = room.players.flatMap((p) => [...p.slips]);
+      // Collect all slips into the pool and save master list for reshuffling
+      room.allSlips = room.players.flatMap((p) => [...p.slips]);
+      room.slipPool = [...room.allSlips];
 
       this.broadcastPhaseChanged(room);
       this.broadcastRoomState(room.code);
@@ -295,7 +300,11 @@ export class RoomManager {
 
   private handleStartTurn(room: Room, player: Player): string | null {
     if (!player.isHost) return "Only the host can start a turn";
-    if (room.phase !== GamePhase.Playing && room.phase !== GamePhase.TurnEnd) {
+    if (
+      room.phase !== GamePhase.Playing &&
+      room.phase !== GamePhase.TurnEnd &&
+      room.phase !== GamePhase.RoundEnd
+    ) {
       return "Cannot start a turn in current phase";
     }
     if (room.slipPool.length === 0) return "No slips in the pool";
@@ -309,7 +318,10 @@ export class RoomManager {
 
     room.activeClueGiverId = clueGiver.id;
     room.phase = GamePhase.TurnActive;
-    room.turnTimeRemaining = 30;
+
+    // Apply carryover time if available, otherwise 30 seconds
+    room.turnTimeRemaining = room.carryoverTime > 0 ? room.carryoverTime : 30;
+    room.carryoverTime = 0;
     room.turnGuessed = [];
     room.turnSkipped = [];
 
@@ -412,6 +424,39 @@ export class RoomManager {
     return null;
   }
 
+  private handleNewGame(room: Room, player: Player): string | null {
+    if (!player.isHost) return "Only the host can start a new game";
+    if (room.phase !== GamePhase.GameOver) {
+      return "Can only start a new game after game over";
+    }
+
+    // Reset game state, keep players and teams
+    room.phase = GamePhase.Submitting;
+    room.round = RoundType.Describe;
+    room.roundNumber = 1;
+    room.scores = { [Team.A]: 0, [Team.B]: 0 };
+    room.activeTeam = Team.A;
+    room.clueGiverIndex = { [Team.A]: 0, [Team.B]: 0 };
+    room.activeClueGiverId = null;
+    room.slipPool = [];
+    room.allSlips = [];
+    room.currentSlip = null;
+    room.turnTimeRemaining = 0;
+    room.turnGuessed = [];
+    room.turnSkipped = [];
+    room.carryoverTime = 0;
+
+    // Clear player slips so they can submit new ones
+    for (const p of room.players) {
+      p.slips = [];
+    }
+
+    room.lastActivityAt = Date.now();
+    this.broadcastPhaseChanged(room);
+    this.broadcastRoomState(room.code);
+    return null;
+  }
+
   /** Draw the next unskipped slip from the pool */
   private drawNextSlip(room: Room): void {
     const available = room.slipPool.filter(
@@ -461,35 +506,94 @@ export class RoomManager {
     }
   }
 
-  /** End the current turn */
+  /** End the current turn, handling round transitions and game over */
   private endTurn(room: Room): void {
     this.clearTurnTimer(room.code);
-
-    room.phase = GamePhase.TurnEnd;
     room.currentSlip = null;
 
-    // Advance clue-giver index for the active team
-    const teamPlayers = room.players.filter((p) => p.team === room.activeTeam);
-    if (teamPlayers.length > 0) {
-      room.clueGiverIndex[room.activeTeam] =
-        (room.clueGiverIndex[room.activeTeam] + 1) % teamPlayers.length;
-    }
-
-    // Switch active team
-    room.activeTeam = room.activeTeam === Team.A ? Team.B : Team.A;
-    room.activeClueGiverId = null;
-    room.turnTimeRemaining = 0;
+    const poolEmpty = room.slipPool.length === 0;
+    const carryover = poolEmpty ? room.turnTimeRemaining : 0;
 
     // Broadcast turn-ended
     this.broadcastToRoom(room.code, {
       type: ServerMessageType.TurnEnded,
       guessedCount: room.turnGuessed.length,
       scores: { ...room.scores },
+      ...(carryover > 0 ? { carryoverTime: carryover } : {}),
     });
 
     room.turnGuessed = [];
     room.turnSkipped = [];
     room.lastActivityAt = Date.now();
+
+    if (poolEmpty) {
+      // Round ended — all slips guessed
+      const completedRound = room.round;
+
+      if (room.roundNumber >= 3) {
+        // Game over
+        room.phase = GamePhase.GameOver;
+        room.activeClueGiverId = null;
+        room.turnTimeRemaining = 0;
+
+        this.broadcastToRoom(room.code, {
+          type: ServerMessageType.RoundEnded,
+          completedRound,
+          scores: { ...room.scores },
+        });
+
+        const winner: Team | "tie" =
+          room.scores[Team.A] > room.scores[Team.B]
+            ? Team.A
+            : room.scores[Team.B] > room.scores[Team.A]
+              ? Team.B
+              : "tie";
+
+        this.broadcastToRoom(room.code, {
+          type: ServerMessageType.GameOver,
+          scores: { ...room.scores },
+          winner,
+        });
+      } else {
+        // Advance to next round
+        const nextRound =
+          room.roundNumber === 1 ? RoundType.Charades : RoundType.OneWord;
+        room.roundNumber += 1;
+        room.round = nextRound;
+        room.phase = GamePhase.RoundEnd;
+        room.carryoverTime = carryover;
+        // Don't switch team or advance clue-giver — carryover turn
+        room.activeClueGiverId = null;
+        room.turnTimeRemaining = 0;
+
+        // Reshuffle all slips back into pool
+        room.slipPool = [...room.allSlips].sort(() => Math.random() - 0.5);
+
+        this.broadcastToRoom(room.code, {
+          type: ServerMessageType.RoundEnded,
+          completedRound,
+          scores: { ...room.scores },
+          nextRound,
+        });
+      }
+    } else {
+      // Normal turn end — pool still has slips
+      room.phase = GamePhase.TurnEnd;
+
+      // Advance clue-giver index for the active team
+      const teamPlayers = room.players.filter(
+        (p) => p.team === room.activeTeam,
+      );
+      if (teamPlayers.length > 0) {
+        room.clueGiverIndex[room.activeTeam] =
+          (room.clueGiverIndex[room.activeTeam] + 1) % teamPlayers.length;
+      }
+
+      // Switch active team
+      room.activeTeam = room.activeTeam === Team.A ? Team.B : Team.A;
+      room.activeClueGiverId = null;
+      room.turnTimeRemaining = 0;
+    }
   }
 
   /** Broadcast a message to all clients in a room */
