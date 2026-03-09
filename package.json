@@ -1,0 +1,14 @@
+{
+  "name": "fishbowl",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "npm run build:shared && npm run build:server && npm run build:client",
+    "build:shared": "cd shared && npx tsc",
+    "build:server": "cd server && npx tsc",
+    "build:client": "cd client && npx vite build",
+    "dev:server": "cd server && npx tsx src/index.ts",
+    "dev:client": "cd client && npx vite",
+    "install:all": "cd shared && npm install && cd ../server && npm install && cd ../client && npm install"
+  }
+}
