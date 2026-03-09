@@ -24,6 +24,11 @@ export interface ConnectedClient {
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const CODE_LENGTH = 4;
 
+/** Maximum number of players allowed in a room */
+export const MAX_PLAYERS = 8;
+/** Minimum number of players required to start a game (configurable for dev/testing) */
+export const MIN_PLAYERS = parseInt(process.env.MIN_PLAYERS ?? "4", 10);
+
 function generateRoomCode(): string {
   let code = "";
   for (let i = 0; i < CODE_LENGTH; i++) {
@@ -100,6 +105,11 @@ export class RoomManager {
     if (isNewRoom) {
       room = makeDefaultRoom(roomCode);
       this.rooms.set(roomCode, room);
+    }
+
+    // Check if room is full
+    if (!isNewRoom && room!.players.filter((p) => p.connected).length >= MAX_PLAYERS) {
+      return "Room is full (maximum 8 players)";
     }
 
     // Check for duplicate name in the room
@@ -257,6 +267,25 @@ export class RoomManager {
   private handleStartGame(room: Room, player: Player): string | null {
     if (room.phase !== GamePhase.Lobby) return "Game can only be started from the lobby";
     if (!player.isHost) return "Only the host can start the game";
+
+    const connectedPlayers = room.players.filter((p) => p.connected);
+
+    if (connectedPlayers.length < MIN_PLAYERS) {
+      return `Need at least ${MIN_PLAYERS} players to start (currently ${connectedPlayers.length})`;
+    }
+
+    // All players must be assigned to a team
+    const unassigned = connectedPlayers.filter((p) => p.team === null);
+    if (unassigned.length > 0) {
+      return "All players must be assigned to a team before starting";
+    }
+
+    // Both teams must have at least one player
+    const teamACount = connectedPlayers.filter((p) => p.team === Team.A).length;
+    const teamBCount = connectedPlayers.filter((p) => p.team === Team.B).length;
+    if (teamACount === 0 || teamBCount === 0) {
+      return "Both teams must have at least one player";
+    }
 
     room.phase = GamePhase.Submitting;
     room.lastActivityAt = Date.now();
