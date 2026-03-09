@@ -77,6 +77,30 @@ All ports are configurable via environment variables. The defaults are **3000** 
 | `VITE_SERVER_PORT` | `3000` | Tells the client which port the game server is on |
 | `VITE_CLIENT_PORT` | `5173` | Vite dev server port |
 
+**Using `.env` files (recommended):**
+
+Copy the example files and edit as needed:
+
+```bash
+cp server/.env.example server/.env
+cp client/.env.example client/.env
+```
+
+`server/.env`:
+```
+PORT=4000
+```
+
+`client/.env`:
+```
+VITE_SERVER_PORT=4000
+VITE_CLIENT_PORT=8080
+```
+
+The server loads `server/.env` automatically on startup. The client loads `client/.env` automatically via Vite.
+
+**Using inline environment variables:**
+
 When changing the server port, set both `PORT` and `VITE_SERVER_PORT` so the client knows where to connect:
 
 ```bash
