@@ -1,0 +1,421 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  min-height: 100vh;
+}
+
+#app {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 16px;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+h1 {
+  font-size: 1.8rem;
+  text-align: center;
+  margin-bottom: 24px;
+  color: #fff;
+}
+
+h2 {
+  font-size: 1.3rem;
+  margin-bottom: 12px;
+  color: #ccc;
+}
+
+h3 {
+  font-size: 1rem;
+  margin-bottom: 8px;
+  color: #aaa;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* Buttons */
+button {
+  padding: 12px 20px;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+  width: 100%;
+}
+
+button:hover {
+  opacity: 0.85;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: #6c63ff;
+  color: #fff;
+}
+
+.btn-secondary {
+  background: #2d2d44;
+  color: #e0e0e0;
+  border: 1px solid #444;
+}
+
+.btn-success {
+  background: #27ae60;
+  color: #fff;
+}
+
+.btn-danger {
+  background: #e74c3c;
+  color: #fff;
+}
+
+.btn-small {
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  width: auto;
+}
+
+/* Inputs */
+input[type="text"] {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #444;
+  border-radius: 8px;
+  font-size: 1rem;
+  background: #16213e;
+  color: #e0e0e0;
+}
+
+input[type="text"]::placeholder {
+  color: #666;
+}
+
+input[type="text"]:focus {
+  outline: none;
+  border-color: #6c63ff;
+}
+
+/* Layout helpers */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stack-sm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+}
+
+/* Landing screen */
+.landing {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+}
+
+.landing h1 {
+  font-size: 2.5rem;
+}
+
+.landing-actions {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.join-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Room code display */
+.room-code {
+  background: #16213e;
+  border: 2px dashed #6c63ff;
+  border-radius: 12px;
+  padding: 12px 24px;
+  text-align: center;
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: 6px;
+  color: #6c63ff;
+  margin-bottom: 16px;
+}
+
+/* Player list */
+.player-list {
+  list-style: none;
+}
+
+.player-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #16213e;
+  border-radius: 6px;
+  margin-bottom: 4px;
+}
+
+.player-name {
+  font-weight: 500;
+}
+
+.player-host {
+  font-size: 0.75rem;
+  background: #6c63ff;
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.player-disconnected {
+  opacity: 0.5;
+}
+
+.player-slips-done {
+  font-size: 0.75rem;
+  color: #27ae60;
+}
+
+/* Team columns */
+.teams-container {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.team-column {
+  background: #16213e;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.team-column h3 {
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.team-a h3 { color: #e74c3c; }
+.team-b h3 { color: #3498db; }
+
+.unassigned-section {
+  margin-bottom: 16px;
+}
+
+/* Slip form */
+.slip-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.slip-form input {
+  padding: 10px;
+}
+
+.slip-validation {
+  font-size: 0.85rem;
+  color: #e74c3c;
+}
+
+.slips-submitted {
+  text-align: center;
+  color: #27ae60;
+  font-weight: 600;
+  padding: 16px;
+}
+
+/* Scores */
+.scoreboard {
+  display: flex;
+  justify-content: center;
+  gap: 24px;
+  margin-bottom: 16px;
+}
+
+.score-block {
+  text-align: center;
+}
+
+.score-block .team-label {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.score-block .score-value {
+  font-size: 2rem;
+  font-weight: 700;
+}
+
+.score-a .team-label { color: #e74c3c; }
+.score-b .team-label { color: #3498db; }
+
+/* Timer */
+.timer {
+  text-align: center;
+  font-size: 3rem;
+  font-weight: 700;
+  margin: 16px 0;
+}
+
+.timer.low {
+  color: #e74c3c;
+}
+
+/* Slip display */
+.slip-card {
+  background: #fff;
+  color: #1a1a2e;
+  border-radius: 12px;
+  padding: 24px;
+  text-align: center;
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 16px 0;
+  min-height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Game action buttons */
+.game-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.game-actions button {
+  flex: 1;
+}
+
+/* Round info */
+.round-info {
+  text-align: center;
+  font-size: 0.9rem;
+  color: #aaa;
+  margin-bottom: 8px;
+}
+
+/* Turn info */
+.turn-info {
+  text-align: center;
+  margin-bottom: 12px;
+  color: #ccc;
+}
+
+/* Status messages */
+.status {
+  text-align: center;
+  padding: 16px;
+  color: #aaa;
+  font-style: italic;
+}
+
+/* Error toast */
+.error-toast {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #e74c3c;
+  color: #fff;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  z-index: 100;
+  max-width: 90vw;
+  text-align: center;
+  animation: fadeIn 0.3s;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(-10px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* Game over */
+.game-over {
+  text-align: center;
+}
+
+.game-over .winner {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 16px 0;
+  color: #f1c40f;
+}
+
+/* Section divider */
+.section {
+  background: #0f3460;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+/* Host controls */
+.host-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+/* Waiting text */
+.waiting {
+  text-align: center;
+  color: #888;
+  padding: 12px;
+}
+
+/* Turn summary */
+.turn-summary {
+  text-align: center;
+  padding: 16px;
+}
+
+.turn-summary .guessed-count {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #27ae60;
+}
