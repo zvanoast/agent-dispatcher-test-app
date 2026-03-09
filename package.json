@@ -7,6 +7,7 @@
     "build:shared": "cd shared && npx tsc",
     "build:server": "cd server && npx tsc",
     "build:client": "cd client && npx vite build",
+    "predev:server": "cd server && npm install",
     "dev:server": "cd server && npx tsx src/index.ts",
     "dev:client": "cd client && npx vite",
     "install:all": "cd shared && npm install && cd ../server && npm install && cd ../client && npm install"
