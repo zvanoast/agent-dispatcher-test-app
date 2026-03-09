@@ -1,0 +1,182 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #1a1a2e;
+  color: #eee;
+  min-height: 100vh;
+}
+
+.container {
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+  text-align: center;
+}
+
+h1 {
+  font-size: 2.5rem;
+  margin-bottom: 0.25rem;
+  color: #e94560;
+}
+
+.subtitle {
+  color: #888;
+  margin-bottom: 2rem;
+}
+
+.card {
+  background: #16213e;
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.card h2 {
+  font-size: 1.1rem;
+  margin-bottom: 1rem;
+  color: #ccc;
+}
+
+.divider {
+  color: #555;
+  margin: 1rem 0;
+  font-size: 0.9rem;
+}
+
+input[type="text"] {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: 2px solid #333;
+  border-radius: 8px;
+  background: #0f3460;
+  color: #eee;
+  font-size: 1rem;
+  margin-bottom: 0.75rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+input[type="text"]:focus {
+  border-color: #e94560;
+}
+
+input[type="text"]::placeholder {
+  color: #666;
+}
+
+button {
+  width: 100%;
+  padding: 0.75rem;
+  border: none;
+  border-radius: 8px;
+  background: #e94560;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+button:hover {
+  background: #c73650;
+}
+
+button:active {
+  background: #a82d44;
+}
+
+.error {
+  background: #5c1a1a;
+  color: #ff6b6b;
+  padding: 0.75rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.room-code-display {
+  background: #16213e;
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.room-code-display .label {
+  display: block;
+  font-size: 0.85rem;
+  color: #888;
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.room-code-display .code {
+  display: block;
+  font-size: 3rem;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: #e94560;
+}
+
+.player-list {
+  list-style: none;
+}
+
+.player-item {
+  display: flex;
+  align-items: center;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid #1a1a2e;
+}
+
+.player-item:last-child {
+  border-bottom: none;
+}
+
+.player-name {
+  flex: 1;
+  text-align: left;
+  font-size: 1.05rem;
+}
+
+.host-badge {
+  background: #e94560;
+  color: #fff;
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  margin-right: 0.5rem;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.status-dot.connected {
+  background: #4caf50;
+}
+
+.status-dot.disconnected {
+  background: #f44336;
+}
+
+.waiting-text {
+  color: #888;
+  margin-top: 1.5rem;
+  font-size: 0.95rem;
+}
+
+.share-text {
+  color: #555;
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+}
