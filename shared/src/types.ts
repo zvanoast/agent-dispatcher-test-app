@@ -71,6 +71,10 @@ export interface Room {
   turnGuessed: Slip[];
   /** Slip IDs skipped during the current turn (cannot re-skip) */
   turnSkipped: string[];
+  /** Master list of all slips (used to reshuffle between rounds) */
+  allSlips: Slip[];
+  /** Seconds carried over from the previous round's last turn */
+  carryoverTime: number;
   createdAt: number;
   lastActivityAt: number;
 }
