@@ -1,3 +1,4 @@
+import "dotenv/config";
 import Fastify from "fastify";
 import websocket from "@fastify/websocket";
 import { RoomManager } from "./roomManager.js";
