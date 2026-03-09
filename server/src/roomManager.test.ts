@@ -1192,6 +1192,55 @@ describe("RoomManager", () => {
         expect(err).toBe("Can only start a new game after game over");
       });
     });
+
+    describe("start-game", () => {
+      it("host transitions room from Lobby to Submitting", () => {
+        const ws1 = mockWs();
+        const ws2 = mockWs();
+        rm.handleConnection(ws1, "AB12", "Alice");
+        rm.handleConnection(ws2, "AB12", "Bob");
+        const room = rm.getRoom("AB12")!;
+        expect(room.phase).toBe(GamePhase.Lobby);
+
+        ws1.send.mockClear();
+        ws2.send.mockClear();
+
+        const err = rm.handleMessage(ws1, { type: ClientMessageType.StartGame });
+        expect(err).toBeNull();
+        expect(room.phase).toBe(GamePhase.Submitting);
+
+        // Both clients should receive a phase-changed broadcast
+        const msg1 = JSON.parse(ws1.send.mock.calls[0][0]);
+        expect(msg1.type).toBe(ServerMessageType.PhaseChanged);
+        expect(msg1.phase).toBe(GamePhase.Submitting);
+
+        const msg2 = JSON.parse(ws2.send.mock.calls[0][0]);
+        expect(msg2.type).toBe(ServerMessageType.PhaseChanged);
+        expect(msg2.phase).toBe(GamePhase.Submitting);
+      });
+
+      it("rejects start-game from non-host player", () => {
+        const ws1 = mockWs();
+        const ws2 = mockWs();
+        rm.handleConnection(ws1, "AB12", "Alice");
+        rm.handleConnection(ws2, "AB12", "Bob");
+        const room = rm.getRoom("AB12")!;
+
+        const err = rm.handleMessage(ws2, { type: ClientMessageType.StartGame });
+        expect(err).toBe("Only the host can start the game");
+        expect(room.phase).toBe(GamePhase.Lobby);
+      });
+
+      it("rejects start-game when not in Lobby phase", () => {
+        const ws1 = mockWs();
+        rm.handleConnection(ws1, "AB12", "Alice");
+        const room = rm.getRoom("AB12")!;
+        room.phase = GamePhase.Submitting;
+
+        const err = rm.handleMessage(ws1, { type: ClientMessageType.StartGame });
+        expect(err).toBe("Game can only be started from the lobby");
+      });
+    });
   });
 });
 

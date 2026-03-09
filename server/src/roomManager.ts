@@ -203,6 +203,8 @@ export class RoomManager {
         return this.handleAssignTeam(room, player, message.playerId, message.team);
       case ClientMessageType.RandomizeTeams:
         return this.handleRandomizeTeams(room, player);
+      case ClientMessageType.StartGame:
+        return this.handleStartGame(room, player);
       case ClientMessageType.SubmitSlips:
         return this.handleSubmitSlips(room, player, message.texts);
       case ClientMessageType.StartTurn:
@@ -249,6 +251,16 @@ export class RoomManager {
 
     room.lastActivityAt = Date.now();
     this.broadcastTeamsUpdated(room);
+    return null;
+  }
+
+  private handleStartGame(room: Room, player: Player): string | null {
+    if (room.phase !== GamePhase.Lobby) return "Game can only be started from the lobby";
+    if (!player.isHost) return "Only the host can start the game";
+
+    room.phase = GamePhase.Submitting;
+    room.lastActivityAt = Date.now();
+    this.broadcastPhaseChanged(room);
     return null;
   }
 
