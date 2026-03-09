@@ -67,6 +67,26 @@ npm run dev:client
 
 Open `http://localhost:5173` in your browser. The Vite dev server automatically proxies WebSocket connections to the game server on port 3000.
 
+### Custom Ports
+
+All ports are configurable via environment variables. The defaults are **3000** (server) and **5173** (client).
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `3000` | Game server port |
+| `VITE_SERVER_PORT` | `3000` | Tells the client which port the game server is on |
+| `VITE_CLIENT_PORT` | `5173` | Vite dev server port |
+
+When changing the server port, set both `PORT` and `VITE_SERVER_PORT` so the client knows where to connect:
+
+```bash
+# Terminal 1 — run server on port 4000
+PORT=4000 npm run dev:server
+
+# Terminal 2 — run client on port 8080, pointing at server port 4000
+VITE_SERVER_PORT=4000 VITE_CLIENT_PORT=8080 npm run dev:client
+```
+
 ## Production Build
 
 ```bash

@@ -19,7 +19,9 @@ export class WsClient {
 
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
     const host = location.hostname;
-    const port = location.port === "5173" ? "3000" : location.port;
+    const serverPort = import.meta.env.VITE_SERVER_PORT ?? "3000";
+    const clientPort = import.meta.env.VITE_CLIENT_PORT ?? "5173";
+    const port = location.port === clientPort ? serverPort : location.port;
     const url = `${protocol}//${host}:${port}/ws?room=${encodeURIComponent(roomCode)}&name=${encodeURIComponent(playerName)}`;
 
     this.ws = new WebSocket(url);
