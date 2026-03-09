@@ -1,7 +1,7 @@
 import Fastify from "fastify";
 import websocket from "@fastify/websocket";
 import { RoomManager } from "./roomManager.js";
-import { ServerMessageType } from "@fishbowl/shared";
+import { ServerMessageType, type ClientMessage } from "@fishbowl/shared";
 
 const PORT = parseInt(process.env.PORT ?? "3000", 10);
 
@@ -27,6 +27,24 @@ app.get("/ws", { websocket: true }, (socket, req) => {
     socket.close(1008, error);
     return;
   }
+
+  socket.on("message", (data: Buffer | string) => {
+    try {
+      const msg: ClientMessage = JSON.parse(
+        typeof data === "string" ? data : data.toString()
+      );
+      const err = roomManager.handleMessage(socket, msg);
+      if (err) {
+        socket.send(
+          JSON.stringify({ type: ServerMessageType.Error, message: err })
+        );
+      }
+    } catch {
+      socket.send(
+        JSON.stringify({ type: ServerMessageType.Error, message: "Invalid message format" })
+      );
+    }
+  });
 
   socket.on("close", () => {
     roomManager.handleDisconnect(socket);

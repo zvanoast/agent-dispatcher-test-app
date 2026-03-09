@@ -3,11 +3,14 @@ import type { WebSocket } from "ws";
 import {
   type Room,
   type Player,
+  type Slip,
   type ServerMessage,
+  type ClientMessage,
   GamePhase,
   Team,
   RoundType,
   ServerMessageType,
+  ClientMessageType,
 } from "@fishbowl/shared";
 
 /** A connected client: the WebSocket plus player/room identity */
@@ -140,15 +143,7 @@ export class RoomManager {
    * Removes them from the room, transfers host if needed.
    */
   handleDisconnect(ws: WebSocket): void {
-    // Find the client by WebSocket reference
-    let clientEntry: ConnectedClient | undefined;
-    for (const [, client] of this.clients) {
-      if (client.ws === ws) {
-        clientEntry = client;
-        break;
-      }
-    }
-
+    const clientEntry = this.findClientByWs(ws);
     if (!clientEntry) return;
 
     const { playerId, roomCode } = clientEntry;
@@ -185,9 +180,145 @@ export class RoomManager {
     this.broadcastRoomState(roomCode);
   }
 
+  /**
+   * Handle an incoming client message on an established connection.
+   * Returns an error string if the message is invalid, or null on success.
+   */
+  handleMessage(ws: WebSocket, message: ClientMessage): string | null {
+    const client = this.findClientByWs(ws);
+    if (!client) return "Not connected to a room";
+
+    const room = this.rooms.get(client.roomCode);
+    if (!room) return "Room not found";
+
+    const player = room.players.find((p) => p.id === client.playerId);
+    if (!player) return "Player not found in room";
+
+    switch (message.type) {
+      case ClientMessageType.AssignTeam:
+        return this.handleAssignTeam(room, player, message.playerId, message.team);
+      case ClientMessageType.RandomizeTeams:
+        return this.handleRandomizeTeams(room, player);
+      case ClientMessageType.SubmitSlips:
+        return this.handleSubmitSlips(room, player, message.texts);
+      default:
+        return `Unhandled message type: ${message.type}`;
+    }
+  }
+
+  private handleAssignTeam(room: Room, sender: Player, targetPlayerId: string, team: Team): string | null {
+    if (!sender.isHost) return "Only the host can assign teams";
+
+    const target = room.players.find((p) => p.id === targetPlayerId);
+    if (!target) return "Player not found";
+
+    target.team = team;
+    room.lastActivityAt = Date.now();
+
+    this.broadcastTeamsUpdated(room);
+    return null;
+  }
+
+  private handleRandomizeTeams(room: Room, sender: Player): string | null {
+    if (!sender.isHost) return "Only the host can randomize teams";
+
+    // Shuffle players array copy using Fisher-Yates
+    const shuffled = [...room.players];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+
+    // Split evenly: first half Team A, second half Team B
+    const half = Math.ceil(shuffled.length / 2);
+    for (let i = 0; i < shuffled.length; i++) {
+      shuffled[i].team = i < half ? Team.A : Team.B;
+    }
+
+    room.lastActivityAt = Date.now();
+    this.broadcastTeamsUpdated(room);
+    return null;
+  }
+
+  private handleSubmitSlips(room: Room, player: Player, texts: string[]): string | null {
+    if (room.phase !== GamePhase.Submitting) return "Not in submitting phase";
+
+    if (!Array.isArray(texts) || texts.length !== 4) {
+      return "Must submit exactly 4 slips";
+    }
+
+    // Validate each slip text is non-empty
+    const trimmed = texts.map((t) => (typeof t === "string" ? t.trim() : ""));
+    if (trimmed.some((t) => !t)) {
+      return "All slips must be non-empty";
+    }
+
+    // Create slip objects
+    const slips: Slip[] = trimmed.map((text) => ({
+      id: uuidv4(),
+      text,
+      submittedBy: player.id,
+    }));
+
+    player.slips = slips;
+    room.lastActivityAt = Date.now();
+
+    // Broadcast updated room state so all clients see slip submission progress
+    this.broadcastRoomState(room.code);
+
+    // Check if all players have submitted — transition to playing
+    const allSubmitted = room.players.every((p) => p.slips.length === 4);
+    if (allSubmitted) {
+      room.phase = GamePhase.Playing;
+
+      // Collect all slips into the pool
+      room.slipPool = room.players.flatMap((p) => [...p.slips]);
+
+      this.broadcastPhaseChanged(room);
+      this.broadcastRoomState(room.code);
+    }
+
+    return null;
+  }
+
+  private broadcastTeamsUpdated(room: Room): void {
+    const message: ServerMessage = {
+      type: ServerMessageType.TeamsUpdated,
+      players: room.players,
+    };
+    for (const client of this.getClientsInRoom(room.code)) {
+      this.send(client.ws, message);
+    }
+  }
+
+  private broadcastPhaseChanged(room: Room): void {
+    const message: ServerMessage = {
+      type: ServerMessageType.PhaseChanged,
+      phase: room.phase,
+      round: room.round,
+      roundNumber: room.roundNumber,
+    };
+    for (const client of this.getClientsInRoom(room.code)) {
+      this.send(client.ws, message);
+    }
+  }
+
+  /** Find a connected client by WebSocket reference */
+  private findClientByWs(ws: WebSocket): ConnectedClient | undefined {
+    for (const [, client] of this.clients) {
+      if (client.ws === ws) return client;
+    }
+    return undefined;
+  }
+
   /** Get a room by code (for testing) */
   getRoom(code: string): Room | undefined {
     return this.rooms.get(code);
+  }
+
+  /** Find a client by player ID (for testing) */
+  getClient(playerId: string): ConnectedClient | undefined {
+    return this.clients.get(playerId);
   }
 
   /** Get all clients in a room */
